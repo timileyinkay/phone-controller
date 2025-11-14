@@ -7,9 +7,8 @@ from datetime import datetime
 from typing import Dict, List
 from aiohttp import web
 
-# Railway Configuration - Use different ports for HTTP and WebSocket
+# Railway Configuration - Use the same port for both HTTP and WebSocket
 HTTP_PORT = int(os.environ.get("PORT", 8080))  # Railway provides this
-WS_PORT = 8081  # Different port for WebSocket
 HOST = "0.0.0.0"
 
 class PhoneManager:
@@ -238,38 +237,51 @@ async def handle_api_command(request):
     except Exception as e:
         return web.json_response({'status': 'error', 'message': str(e)}, status=500)
 
-async def start_http_server():
-    """Start HTTP server for control panel"""
-    app = web.Application()
-    app.router.add_get('/', serve_control_panel)
-    app.router.add_get('/api/phones', handle_api_phones)
-    app.router.add_post('/api/command', handle_api_command)
+async def websocket_handler(request):
+    """Handle WebSocket connections"""
+    ws = web.WebSocketResponse()
+    await ws.prepare(request)
     
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, HOST, HTTP_PORT)
-    await site.start()
-    print(f"🌐 Web control panel: http://{HOST}:{HTTP_PORT}")
-    return runner
-
-async def start_websocket_server():
-    """Start WebSocket server for phones"""
-    # Railway only exposes one port, so we use the same port for both
-    ws_server = await websockets.serve(handle_phone_connection, HOST, HTTP_PORT)
-    print(f"📡 WebSocket server running on port {HTTP_PORT}")
-    return ws_server
+    try:
+        async for msg in ws:
+            if msg.type == web.WSMsgType.TEXT:
+                await phone_manager.handle_phone_message(msg.data, ws)
+            elif msg.type == web.WSMsgType.ERROR:
+                print(f'WebSocket error: {ws.exception()}')
+    finally:
+        # Remove phone from connected list when disconnected
+        phones_to_remove = []
+        for phone_id, phone_data in phone_manager.connected_phones.items():
+            if phone_data['websocket'] == ws:
+                phones_to_remove.append(phone_id)
+        
+        for phone_id in phones_to_remove:
+            del phone_manager.connected_phones[phone_id]
+            print(f"❌ {phone_id} - DISCONNECTED (Total: {len(phone_manager.connected_phones)})")
+    
+    return ws
 
 async def main():
     print("🚀 Starting Phone Controller Server...")
     print(f"📍 Web Panel: http://thriving-nature.up.railway.app")
     print(f"📡 WebSocket: ws://thriving-nature.up.railway.app")
     
-    # Start HTTP server
-    http_runner = await start_http_server()
+    # Create aiohttp app
+    app = web.Application()
     
-    # Start WebSocket server
-    await start_websocket_server()
+    # Add routes
+    app.router.add_get('/', serve_control_panel)
+    app.router.add_get('/api/phones', handle_api_phones)
+    app.router.add_post('/api/command', handle_api_command)
+    app.router.add_get('/ws', websocket_handler)  # WebSocket route
     
+    # Start server
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, HOST, HTTP_PORT)
+    await site.start()
+    
+    print(f"🌐 Server running on port {HTTP_PORT}")
     print("✅ Server started successfully!")
     
     # Keep server running
