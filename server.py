@@ -1819,4 +1819,4 @@ if __name__ == '__main__':
     print("📍 Web Panel: http://localhost:5000")
     print("🎮 Modern Dark UI Activated")
     print("📡 USSD System Ready")
-    socketio.run(app, host='0.0.0.0', port=5000, debug=True)
+    socketio.run(app, host='0.0.0.0', port=5000, debug=False, allow_unsafe_werkzeug=True)
