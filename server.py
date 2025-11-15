@@ -1814,6 +1814,8 @@ def handle_message_response(data):
         'response': message
     })
 
+port = int(os.environ.get('PORT', 5000))
+
 if __name__ == '__main__':
     print("🚀 Starting Neon Control Server...")
     print("📍 Web Panel: http://localhost:5000")
