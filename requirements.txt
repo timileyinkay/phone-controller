@@ -4,3 +4,6 @@ flask-socketio
 requests
 websockets>=11.0.3
 aiohttp>=3.8.0
+flask
+python-socketio
+flask-socketio
