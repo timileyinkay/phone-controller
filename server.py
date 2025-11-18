@@ -6,7 +6,7 @@ from datetime import datetime
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'quantum_phoenix_server_2024'
-socketio = SocketIO(app, cors_allowed_origins="*")
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
 
 # Phoenix registry and command history
 PHOENIX_REGISTRY = {}
@@ -289,7 +289,10 @@ HTML = '''<!DOCTYPE html>
         });
 
         socket.on('phoenix_heartbeat', (data) => {
-            // Phoenix is alive and connected
+            // Phoenix is alive and connected - update last seen
+            if (phoenixes.has(data.id)) {
+                phoenixes.set(data.id, {...phoenixes.get(data.id), lastSeen: Date.now()});
+            }
         });
 
         // Display functions
@@ -481,18 +484,6 @@ def handle_quantum_command(data):
     signature = data.get('sig', '')
     
     if phoenix_id in PHOENIX_REGISTRY:
-        # In production, validate signature here
-        # valid_signature = validate_command_signature(command, signature)
-        # if not valid_signature:
-        #     socketio.emit('quantum_response', {
-        #         'id': phoenix_id,
-        #         'command': command,
-        #         'result': 'UNAUTHORIZED: Invalid signature',
-        #         'platform': PHOENIX_REGISTRY[phoenix_id].get('platform', 'unknown'),
-        #         'safe': PHOENIX_REGISTRY[phoenix_id].get('safe', False)
-        #     })
-        #     return
-        
         # Log command
         COMMAND_HISTORY.append({
             'timestamp': datetime.now().isoformat(),
@@ -507,6 +498,7 @@ def handle_quantum_command(data):
             'sig': sign_command(command)  # Add HMAC signature
         }
         socketio.emit('quantum_command', signed_command, room=PHOENIX_REGISTRY[phoenix_id])
+        print(f"📤 Command sent to {phoenix_id}: {command}")
 
 @socketio.on('connect')
 def handle_connect():
@@ -541,8 +533,8 @@ if __name__ == '__main__':
     print("🔐 Secure command channel active")
     print("🌐 Cross-platform support enabled")
     print("📊 Real-time monitoring ready")
-    print("🏥 Health check: http://localhost:{port}/health")
-    print("📈 Status: http://localhost:{port}/status")
+    print(f"🏥 Health check: http://localhost:{port}/health")
+    print(f"📈 Status: http://localhost:{port}/status")
     print("=" * 50)
     
-    socketio.run(app, host='0.0.0.0', port=port, debug=False)
+    socketio.run(app, host='0.0.0.0', port=port, debug=False, allow_unsafe_werkzeug=True)
